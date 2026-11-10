@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ThreeSeven</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Flat cabinet on a black field: solid fills and outlines only, no light or shadow. */
+:root {
+  --room: #000000;
+  --cabinet: #8a1f19;
+  --outline: #1c0705;
+  --brass: #c99a45;
+  --bulb: #ffd36b;
+  --off: #3a1512;
+  --ink: #f2e6cf;
+  --paper: #efe3c8;
+  --meter-green: #43c94a;
+  --meter-red: #ff3b30;
+  --meter-off: #2b1310;
+  --font-display: "Silkscreen", "Courier New", monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--room);
+  color: var(--ink);
+  font-family: var(--font-display);
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.stage {
+  min-height: 100%;
+  display: grid; justify-content: center; align-content: start;
+  gap: 24px; padding: 28px 16px 40px;
+  grid-template-columns: minmax(0, 520px);
+}
+@media (min-width: 900px) and (min-aspect-ratio: 1/1) {
+  .stage { grid-template-columns: 520px 280px; align-items: start; padding-top: 40px; }
+  .history { max-height: calc(100vh - 80px); }
+}
+
+/* ---------- cabinet ---------- */
+.machine-wrap { position: relative; padding-right: 62px; }
+.machine {
+  --rgap: 10px; --cg: 6px;
+  container-type: inline-size;
+  background: var(--cabinet);
+  border: 6px solid var(--brass);
+  outline: 4px solid var(--outline);
+  border-radius: 14px 14px 6px 6px;
+  padding: 14px 16px 18px;
+  transition: opacity .6s;
+}
+.machine.off .face > :not(.result) { opacity: .4; }
+/* jackpot: 2 s of flashing (switches every 1/3 s) between 777 and the receipts */
+.machine.jackpot { animation: jpBody .667s steps(2) 3; }
+.machine.jackpot .marquee, .machine.jackpot .marquee b { animation: jpText .667s steps(2) 3; }
+.machine.jackpot .reel { animation: jpReel .667s steps(2) 3; }
+@keyframes jpBody { 50% { background: #d8382c; border-color: #fff4c2; outline-color: var(--bulb); } }
+@keyframes jpText { 50% { color: #fff4c2; } }
+@keyframes jpReel { 50% { outline: 4px solid var(--bulb); outline-offset: 2px; } }
+
+.face { position: relative; --coin: min(36px, calc(((100cqw - 28px - 2 * var(--rgap)) / 3 - 2 * var(--cg)) / 3)); }
+/* hint 3: one large frame around a coin group, its reel and its meter column */
+.linkframe { position: absolute; border: 3px solid var(--bulb); border-radius: 8px; pointer-events: none; z-index: 3; }
+.linkframe[hidden] { display: none; }
+@supports (width: round(down, 10.5px, 1px)) {
+  .face { --coin: round(down, min(36px, calc(((100cqw - 28px - 2 * var(--rgap)) / 3 - 2 * var(--cg)) / 3)), 2px); }
+}
+.lamps { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px 5px; padding: 2px 6px 12px; }
+.lamp { height: 14px; border-radius: 7px; background: var(--off); border: 2px solid var(--outline); }
+.lamp.on { background: var(--bulb); }
+.lamp.blink { animation: wave 2.8s ease-in-out infinite; } /* all lamps together */
+@keyframes wave { 50% { background: var(--off); } }
+
+.marquee {
+  text-align: center; font-weight: 700;
+  font-size: clamp(22px, 7cqw, 38px); letter-spacing: .22em; padding-left: .22em;
+  color: var(--bulb);
+  padding: 4px 0 12px;
+  border-bottom: 4px solid var(--outline);
+  margin-bottom: 14px;
+}
+.marquee span { display: inline-block; transform: scaleX(1.18); }
+.marquee b { color: #ff5a4a; font-weight: 700; }
+
+/* coins: one frame, wider gaps between positions 3|4 and 6|7 */
+.coinrow {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--rgap);
+  background: var(--outline); border-radius: 8px; padding: 8px 14px; margin-bottom: 10px;
+}
+.coinrow { box-shadow: inset 0 0 0 3px var(--brass); }
+.coinrow.await { animation: awaitRow 3.2s ease-in-out infinite; }
+@keyframes awaitRow { 50% { box-shadow: inset 0 0 0 3px rgba(201,154,69,.15); } }
+.group { display: flex; justify-content: center; gap: var(--cg); }
+.coin {
+  --c: #888;
+  width: var(--coin); height: var(--coin); flex: none; border-radius: 50%; padding: 0;
+  border: 3px solid rgba(0,0,0,.35);
+  background: var(--c); cursor: pointer;
+  display: grid; place-items: center;
+  transition: transform .12s, opacity .2s;
+}
+/* coin rim: reeded edge drawn inside the dark outline (24 notches in the coin's own color). History coins stay plain. */
+.coin, .slotf.filled, .slotf.white { position: relative; }
+.coin::before, .slotf.filled::before, .slotf.white::before {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%; pointer-events: none;
+  background: repeating-conic-gradient(var(--c) 0 10.5deg, transparent 10.5deg 15deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+          mask: radial-gradient(circle closest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+}
+.coin.used::before { --c: #3d3a38; }
+.hrow .mini b { position: relative; }
+.slotf { display: grid; place-items: center; }
+.slotf .smark { position: relative; font-family: var(--font-display); font-weight: 700; font-size: calc(var(--coin) * .42); line-height: 1; color: rgba(0,0,0,.55); }
+body:not(.assist):not(.h6) .slotf .smark { visibility: hidden; }
+.coin.used::before { opacity: .4; }
+.coin .mark, .hrow .mini b { position: relative; }
+.coin .mark { font-family: var(--font-display); font-weight: 700; font-size: calc(var(--coin) * .42); color: rgba(0,0,0,.55); line-height: 1; }
+body:not(.assist):not(.h6) .coin .mark, body:not(.assist):not(.h6) .hrow .mini b { visibility: hidden; }
+
+/* hints unlock every 3 completed pulls (one lamp column): h1 white coin, h2 upper meter, h3 links, h4 goal meter, h5 BAR breakdown, h6 coin numbers */
+body:not(.h2) #meters .meter, body:not(.h2) .hres .meter { visibility: hidden; }
+body:not(.h4) #goal .meter { visibility: hidden; }
+body:not(.h4) .plabel { visibility: hidden; } /* place labels come with hint 4 */
+.flash { animation: flash .3s steps(2) 4; }
+@keyframes flash { 50% { opacity: .15; } }
+.link { outline: 3px solid var(--bulb) !important; outline-offset: 2px; border-radius: 8px; }
+.coin:hover:not(:disabled) { transform: translateY(-3px); }
+.coin:focus-visible, .btn:focus-visible, .lever:focus-visible { outline: 3px solid var(--bulb); outline-offset: 3px; }
+.coin:disabled { cursor: default; }
+.coin.used { background: #3d3a38; opacity: .45; transform: none; }
+.coin.locked:not(.used) { opacity: .5; }
+
+/* reels */
+.window {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--rgap);
+  padding: 10px; border-radius: 10px;
+  background: var(--outline); border: 4px solid #8d8d88;
+}
+.reel { position: relative; border-radius: 4px; overflow: hidden; background: var(--paper); }
+.reel.reach { outline: 3px solid var(--bulb); outline-offset: 2px; animation: reachBlink .3s steps(2) infinite; }
+@keyframes reachBlink { 50% { outline-color: transparent; } }
+.reel canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+.reel::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px;
+  background: rgba(200, 40, 30, .45);
+}
+
+/* change meter: one column under each coin (100s, 10s, 1s), lit bottom-up; 1-unit coins green, the 5-unit coin red on top */
+.meters { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--rgap); padding: 10px 14px; margin-top: 10px; background: var(--outline); border-radius: 8px; }
+.meter { display: flex; justify-content: center; gap: var(--cg); }
+.mrow { width: var(--coin); flex: none; display: flex; flex-direction: column-reverse; gap: 3px; }
+.meters.goal { margin-top: 6px; }
+.cell { height: 7px; background: var(--meter-off); }
+.cell.lit.g { background: var(--meter-green); }
+.cell.lit.r { background-color: var(--meter-red); }
+.cell.lit.x { background-color: #9a9a96; }
+/* color assist: five faint diagonal strokes on red cells */
+body.assist .cell.lit.r {
+  background-image: linear-gradient(to top right, transparent calc(50% - .7px), rgba(0,0,0,.45) 50%, transparent calc(50% + .7px));
+  background-size: 20% 100%; background-repeat: repeat-x;
+}
+
+/* tray */
+.tray { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; margin-top: 16px; }
+.tray { align-items: start; }
+.tray .whitebox { justify-self: start; }
+/* tapping the white coin: its frame blinks red slowly to show it can't be chosen */
+body.h1 .whitebox { cursor: not-allowed; }
+/* same look as the coin row's waiting blink, in red and twice as fast */
+.whitebox.deny { animation: denyBlink 1.6s ease-in-out 1.5; }
+@keyframes denyBlink { 0%, 100% { box-shadow: inset 0 0 0 3px #ff3b30; } 50% { box-shadow: inset 0 0 0 3px rgba(255,59,48,.15); } }
+.tray #reset { justify-self: end; align-self: start; width: calc(var(--coin) + 16px); height: calc(var(--coin) + 16px); }
+.tray #reset svg { width: 60%; height: 60%; }
+.slotf.white { display: grid; place-items: center; }
+.slotf .wmark { position: relative; font-family: var(--font-display); font-weight: 700; font-size: calc(var(--coin) * .42); line-height: 1; color: rgba(0,0,0,.55); }
+body:not(.h1) .slotf.white { visibility: hidden; } /* the white coin (with its 0) appears at hint 1; its frame is always there */
+.slotline { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--outline); border-radius: 8px; }
+.slotmouth { width: 8px; height: var(--coin); background: #000; border: 2px solid var(--brass); border-radius: 3px; margin-right: 6px; }
+.slotcol { display: grid; justify-items: center; gap: 3px; }
+.slotline { align-items: flex-start; }
+.slotmouth { width: 8px; height: var(--coin); background: #000; border: 2px solid var(--brass); border-radius: 3px; margin-right: 6px; }
+.slotf.white { --c: #f4f1e8; background: #f4f1e8; border: 3px solid rgba(0,0,0,.35); cursor: default; }
+.plabel.blank { visibility: hidden !important; }
+.plabel { font-size: 9px; line-height: 1; color: #c9b48f; }
+.slotf { width: var(--coin); height: var(--coin); border-radius: 50%; border: 2px dashed rgba(242,230,207,.25); }
+.slotf.filled { border: 3px solid rgba(0,0,0,.35); }
+.slotf.next { border: 2px dashed var(--brass); animation: awaitSlot 3.2s ease-in-out infinite; }
+@keyframes awaitSlot { 50% { border-color: rgba(201,154,69,.15); } }
+.btn {
+  width: 44px; height: 44px; border-radius: 8px; cursor: pointer;
+  background: var(--outline); color: var(--ink); border: 3px solid var(--brass);
+  display: grid; place-items: center; padding: 0;
+}
+.btn:disabled { opacity: .35; cursor: default; }
+.btn svg { width: 24px; height: 24px; }
+
+.result { display: flex; justify-content: center; margin-top: 16px; }
+.result .btn { width: 64px; height: 64px; animation: pulse 1s ease-in-out infinite; }
+.result .btn svg { width: 34px; height: 34px; }
+.result:empty { display: none; }
+@keyframes pulse { 50% { transform: scale(1.08); } }
+
+/* lever */
+.lever { position: absolute; right: 0; top: 40%; width: 52px; height: 210px; border: 0; background: none; padding: 0; cursor: pointer; touch-action: none; }
+.lever .base { position: absolute; left: 10px; bottom: 30px; width: 24px; height: 58px; background: #8d8d88; border: 3px solid var(--outline); border-radius: 4px; }
+.lever .arm { position: absolute; left: 14px; bottom: 62px; width: 16px; height: 120px; background: #c9c9c3; border: 2px solid var(--outline); transform-origin: 50% 100%; transition: transform .18s; }
+.lever .knob { position: absolute; left: -13px; top: -36px; width: 38px; height: 38px; border-radius: 50%; background: #e0261b; border: 3px solid var(--outline); }
+/* ready: knob blinks with a yellow ring, and the arm gives a small tug downward */
+.lever.ready .knob { background: #ff4a3a; animation: awaitKnob 1.6s ease-in-out infinite; }
+@keyframes awaitKnob {
+  0%, 100% { background: #ff4a3a; box-shadow: 0 0 0 3px var(--bulb), 0 0 0 7px rgba(255,211,107,.45); }
+  50% { background: #5a1510; box-shadow: 0 0 0 3px rgba(255,211,107,0), 0 0 0 7px rgba(255,211,107,0); }
+}
+.lever.ready .arm { animation: tug 1.6s ease-in-out infinite; }
+@keyframes tug { 0%, 60%, 100% { transform: none; } 75% { transform: scaleY(.93); } }
+.lever:not(.ready) .knob { background: #8a2a22; }
+.lever.pulled .arm { transform: scaleY(-.55); }
+.lever:disabled { cursor: default; }
+
+/* history */
+.history { background: #120605; border: 3px solid #2a0d0a; border-radius: 10px; padding: 12px; overflow-y: auto; }
+.history-head { display: flex; align-items: center; gap: 8px; color: #a28b6b; padding-bottom: 8px; border-bottom: 2px solid #2a0d0a; margin-bottom: 8px; }
+.history-head > svg { width: 18px; height: 18px; }
+.mute { margin-left: auto; width: 34px; height: 34px; }
+.mute.tight { margin-left: 0; }
+.mute svg { width: 20px; height: 20px; }
+.hrow { display: flex; align-items: flex-start; gap: 6px; padding: 8px 2px; border-bottom: 1px dashed rgba(201, 154, 69, .2); animation: rowin .3s ease-out; }
+.hrow .mini { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(0,0,0,.35); margin-top: 10px; flex: none; display: grid; place-items: center; }
+.hrow .mini b { font-family: var(--font-display); font-size: 9px; line-height: 1; color: rgba(0,0,0,.6); }
+.hrow .arrow { width: 16px; height: 16px; color: #a28b6b; margin: 11px 2px 0; flex: none; }
+.hres { display: grid; justify-items: center; gap: 3px; }
+.hres img { width: 40px; height: auto; image-rendering: pixelated; border-radius: 3px; }
+.hrow.win .hres img { outline: 2px solid var(--bulb); }
+.hres .meter { gap: 2px; }
+.hres .mrow { width: 10px; gap: 1px; }
+.hres .cell { height: 3px; }
+@keyframes rowin { from { opacity: 0; transform: translateY(-6px); } }
+
+/* clear: Japanese-style coins rain down (flat: 1, 5, 10, 50, 100, 500 yen look-alikes) */
+.fx { position: fixed; inset: 0; pointer-events: none; z-index: 15; overflow: hidden; }
+.drop { position: absolute; top: -60px; animation: fall linear forwards; }
+.yen {
+  display: grid; place-items: center; border-radius: 50%;
+  border: 2px solid rgba(0,0,0,.28); background: var(--yc);
+  font-family: var(--font-display); font-weight: 700; color: rgba(0,0,0,.35);
+  animation: flip .7s linear infinite;
+}
+.yen.hole { background: radial-gradient(circle, transparent 0 21%, rgba(0,0,0,.28) 22% 26%, var(--yc) 27%); }
+@keyframes fall { to { transform: translateY(calc(100vh + 120px)); } }
+@keyframes flip { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(.15); } }
+
+/* clear: three receipts print out, one per reel */
+.receipts { position: fixed; inset: 0; z-index: 18; overflow-y: auto; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 24px 16px; }
+.receipts[hidden] { display: none; }
+.rc-wrap { display: grid; justify-items: center; gap: 20px; }
+.rc-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 22px; }
+.receipt {
+  width: 236px; padding: 24px 18px 28px; background: #f6f3ea; color: #222;
+  font-family: "IBM Plex Mono", "Courier New", monospace; font-size: 12.5px; line-height: 1.55;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 12px 51% repeat-x,
+                conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / 12px 51% repeat-x;
+          mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 12px 51% repeat-x,
+                conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / 12px 51% repeat-x;
+  animation: print 1.3s steps(26) both;
+}
+.receipt:nth-child(2) { margin-top: 16px; animation-delay: .7s; }
+.receipt:nth-child(3) { margin-top: 6px; animation-delay: 1.4s; }
+@keyframes print { from { clip-path: inset(0 0 100% 0); transform: translateY(-14px); } to { clip-path: inset(0); transform: none; } }
+.receipt .c { text-align: center; }
+.receipt .logo { font-family: var(--font-display); font-weight: 700; font-size: 18px; letter-spacing: .1em; }
+.receipt .logo b { color: #c22; font-weight: 700; }
+.receipt .title { letter-spacing: .3em; font-size: 14px; }
+.receipt .rule { border-top: 1px dashed #777; margin: 9px 0; }
+.receipt .line { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.receipt .big { font-size: 14px; font-weight: 700; }
+.receipt .bar { display: block; margin: 6px auto 2px; }
+/* change coins scattered over the barcode (plain: color, size, hole) */
+.receipt .barwrap { position: relative; width: 200px; margin: 0 auto; }
+.receipt .yen {
+  position: absolute; border-radius: 50%; border: 2px solid rgba(0,0,0,.35); background: var(--yc);
+  opacity: 0; animation: coinIn .5s ease-out both;
+}
+/* 5 and 50 yen: hole outlined with the same 2px line as the rim */
+.receipt .yen.hole { background: radial-gradient(circle closest-side, transparent 0 calc(30% - 1px), rgba(0,0,0,.35) calc(30% - 1px) calc(30% + 1px), var(--yc) calc(30% + 1px)); }
+@keyframes coinIn { from { opacity: 0; transform: translateY(-26px); } to { opacity: 1; transform: none; } }
+.receipt .code { text-align: center; font-size: 10.5px; letter-spacing: .22em; }
+.rc-actions { display: flex; gap: 14px; animation: fadein .3s 2.8s both; }
+.receipts .btn { height: 48px; }
+.receipts .btn.share { width: auto; padding: 0 18px; text-decoration: none; font-family: var(--font-display); font-size: 17px; font-weight: 700; letter-spacing: .1em; }
+.result .btn.word { width: auto; height: 48px; padding: 0 16px; animation: none; font-family: var(--font-display); font-size: 15px; font-weight: 700; letter-spacing: .06em; }
+.result { gap: 12px; }
+@keyframes fadein { from { opacity: 0; } }
+
+/* intro popup */
+.intro { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px 24px; background: rgba(0,0,0,.78); }
+.intro[hidden] { display: none; }
+.intro { animation: fadein .6s ease-out both; }
+.intro .intro-card { animation: rise .6s ease-out both; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+.intro-card {
+  position: relative; width: min(400px, 100%);
+  background: var(--cabinet); border: 6px solid var(--brass); outline: 4px solid var(--outline);
+  border-radius: 12px; padding: 26px 14px 22px; text-align: center;
+}
+.intro-card h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: .06em; color: var(--bulb); font-weight: 700; text-wrap: balance; }
+.intro-card h2 b { color: #ff5a4a; }
+/* fixed two-line title so it never wraps mid-phrase; white for the small words, yellow for the key words */
+.intro-card h2 .ln { display: block; white-space: nowrap; font-size: clamp(15px, 4.6vw, 19px); letter-spacing: .03em; }
+.intro-card h2 .ln.big { font-size: clamp(17px, 6vw, 26px); margin-bottom: 2px; } /* the headline line, largest */
+.intro-card h2 i { font-style: normal; color: #fff; }
+.intro-card p { white-space: nowrap; color: #fff; }
+.intro-card p .y { color: var(--bulb); }
+.intro-card p em { font-style: normal; color: #ff5a4a; font-size: 1.7em; line-height: 1; vertical-align: -.08em; }
+.intro-card p { margin: 10px 0 20px; font-size: clamp(15px, 4.7vw, 21px); font-weight: 700; line-height: 1.3; color: var(--ink); letter-spacing: .01em; }
+/* the box stacks two faces in one cell (table / challenge line), so its size never changes when flipping */
+.ranks { display: grid; width: fit-content; margin: 0 auto; --rpad: clamp(12px, 6vw, 24px); padding: 10px var(--rpad); background: rgba(28,7,5,.55); border-radius: 8px; font-size: clamp(12px, 3.6vw, 13px); text-align: left; opacity: .75; }
+.ranks > * { grid-area: 1 / 1; }
+.rtable { display: grid; grid-template-columns: auto auto; gap: 4px clamp(8px, 3.6vw, 14px); white-space: nowrap; margin: 0; align-self: center; }
+.rtable div { display: contents; }
+/* after a first clear in this browser the rating box becomes a card that flips to a challenge line */
+.ranks { position: relative; }
+/* the box itself stays solid (so the rim isn't see-through); only the table text keeps the soft, faded look */
+.ranks.tappable { cursor: pointer; opacity: 1; padding-right: 40px; animation: tapRim 3.2s ease-in-out infinite; } /* slow brass rim blink says "tap me" */
+.ranks.tappable .rtable { opacity: .75; }
+.ranks.tappable .secret { margin-left: calc(-1 * var(--rpad)); margin-right: -40px; } /* center on the whole box, ignoring the icon's padding */
+.ranks.tappable::after {
+  content: ""; position: absolute; top: 8px; right: 8px; width: 16px; height: 16px; pointer-events: none;
+  background: var(--brass);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='square'%3E%3Cpath d='M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='square'%3E%3Cpath d='M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+@keyframes tapRim { 0%, 100% { box-shadow: inset 0 0 0 2px var(--brass); } 50% { box-shadow: inset 0 0 0 2px rgba(201,154,69,.15); } }
+.ranks.flipped .rtable { visibility: hidden; }
+.ranks .secret {
+  /* shares the table's grid cells, so the box is always as tall as the larger of the two faces */
+  align-self: center; justify-self: center; margin: 0; padding: 4px 0; display: grid; justify-items: center; gap: 6px;
+  text-align: center; font-size: 16px; line-height: 1.3; color: #fff; font-weight: 700;
+  animation: fadein .3s ease-out both;
+}
+.ranks .secret[hidden] { display: grid; visibility: hidden; }
+.ranks .secret .ln { display: block; white-space: nowrap; } /* fixed two lines, styled like the headline */
+.ranks .secret .y { color: var(--bulb); }
+.ranks .secret em { font-style: normal; font-weight: 700; color: #ff5a4a; font-size: 1.8em; line-height: 1; vertical-align: -.08em; }
+.ranks dt { color: #b9a07c; font-variant-numeric: tabular-nums; }
+.ranks dd { margin: 0; color: #d9c59a; }
+.intro-actions { display: flex; justify-content: center; gap: 12px; margin-top: 18px; }
+.intro-card .intro-actions .btn.ok { margin: 0; }
+.intro-card .btn.ok[hidden] { display: none; }
+.intro-card .btn.ok.wide { width: auto; padding: 0 16px; font-size: 15px; }
+.intro-card .btn.ok { margin: 18px auto 0; width: 96px; height: 44px; font-family: var(--font-display); font-size: 18px; font-weight: 700; letter-spacing: .1em; }
+.intro-x { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; }
+.intro-x svg { width: 18px; height: 18px; }
+
+/* tutorial hand */
+.hand { position: fixed; z-index: 6; width: 34px; height: 40px; pointer-events: none; transition: left .35s, top .35s; animation: bob .7s ease-in-out infinite; }
+.hand[hidden] { display: none; }
+@keyframes bob { 50% { transform: translateY(8px); } }
+
+@media (max-width: 430px) {
+  .machine-wrap { padding-right: 54px; }
+  .machine { padding: 10px 10px 14px; }
+  .machine { --rgap: 6px; --cg: 3px; }
+  .lever { width: 46px; }
+
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+</style>
+</head>
+<body class="assist">
+<main class="stage">
+  <div class="machine-wrap">
+    <div class="machine" id="machine"><div class="face"><div class="linkframe" id="linkframe" hidden></div>
+      <div class="lamps" id="lamps" aria-label="残り回数"></div>
+      <div class="marquee" aria-label="ThreeSeven"><span>THREE<b>SEVEN</b></span></div>
+      <div class="coinrow" id="coins"></div>
+      <div class="window" id="reels"></div>
+      <div class="meters" id="meters" aria-hidden="true"></div>
+      <div class="meters goal" id="goal" aria-hidden="true"></div>
+      <div class="tray">
+        <div class="slotline whitebox" aria-hidden="true"><div class="slotf white"><b class="wmark">0</b></div></div>
+        <div class="slotline" aria-label="投入したコイン">
+          <div class="slotcol"><div class="slotmouth"></div><span class="plabel blank">&nbsp;</span></div>
+          <div class="slotcol"><div class="slotf" id="s0"></div><span class="plabel">100</span></div><div class="slotcol"><div class="slotf" id="s1"></div><span class="plabel">10</span></div><div class="slotcol"><div class="slotf" id="s2"></div><span class="plabel">1</span></div>
+        </div>
+        <button class="btn" id="reset" aria-label="コインを戻す">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 4L4 13h16z"/><rect x="4" y="16" width="16" height="3.5"/></svg>
+        </button>
+      </div>
+      <div class="result" id="result"></div>
+    </div></div>
+    <button class="lever" id="lever" aria-label="レバーを引く">
+      <span class="base"></span>
+      <span class="arm"><span class="knob"></span></span>
+    </button>
+  </div>
+
+  <aside class="history" aria-label="履歴">
+    <div class="history-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+      <span id="hcount">0 / 21</span>
+      <button class="btn mute" id="info" aria-label="遊び方を表示"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="10" y="3" width="4" height="4"/><rect x="10" y="9" width="4" height="12"/></svg></button>
+      <button class="btn mute tight" id="assist" aria-label="色の補助表示を切り替える" aria-pressed="true"><svg id="assistIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"></svg></button>
+      <button class="btn mute tight" id="mute" aria-label="音を切り替える"><svg id="muteIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"></svg></button>
+    </div>
+    <div id="hlist"></div>
+  </aside>
+</main>
+
+<svg class="hand" id="hand" viewBox="0 0 17 20" hidden aria-hidden="true" shape-rendering="crispEdges">
+  <path fill="#1b0605" d="M5 0h3v1h1v6h2v1h2v1h2v1h1v1h1v6h-1v2h-1v2H5v-1H4v-2H3v-2H2v-2H1v-1H0v-3h3v1h1V1h1z"/>
+  <path fill="#f6e7c8" d="M5 1h3v8h1V8h2v1h1v1h1V10h1v1h1v1h1v5h-1v2h-1v1H6v-1H5v-2H4v-2H3v-2H2v-1H1v-1h2v1h1v1h1z"/>
+</svg>
+
+<div class="fx" id="fx" aria-hidden="true"></div>
+<div class="receipts" id="receipts" hidden role="dialog" aria-modal="true" aria-label="Receipts">
+  <div class="rc-wrap"><div class="rc-row" id="rcRow"></div>
+    <div class="rc-actions">
+      <a class="btn share" id="rcShare" href="#" target="_blank" rel="noopener">SHARE</a>
+    </div>
+  </div>
+</div>
+<div class="intro" id="intro" hidden role="dialog" aria-modal="true" aria-labelledby="introTitle">
+  <div class="intro-card">
+    <h2 id="introTitle"><span class="ln big"><i>get</i> THREE<b>SEVEN</b></span><span class="ln"><i>within</i> <b>21</b> SPINS</span></h2>
+    <p><em>1</em> <span class="y">HINT</span> every <em>3</em> <span class="y">SPINS</span></p>
+    <div class="ranks">
+      <dl class="rtable">
+        <div><dt>2&ndash;6 spins</dt><dd>LUCKY</dd></div>
+        <div><dt>7&ndash;12 spins</dt><dd>BEYOND HUMAN</dd></div>
+        <div><dt>13&ndash;15 spins</dt><dd>INSANE</dd></div>
+        <div><dt>16&ndash;18 spins</dt><dd>INCREDIBLE</dd></div>
+        <div><dt>19&ndash;21 spins</dt><dd>EXCELLENT</dd></div>
+      </dl>
+      <p class="secret" id="secret" hidden><span class="ln">Math puzzle master?</span><span class="ln">Clear within <em>7</em> <span class="y">SPINS</span></span></p>
+    </div>
+    <div class="intro-actions">
+      <button class="btn ok wide" id="introNew">New Game</button>
+      <button class="btn ok" id="introGo">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== problem data: a,b,c (9 digits, 1-9 once each). x is unique for each set. =====
+const DATA = "123465879 123487569 123487659 123496857 123546897 123564879 123649758 123649857 123649875 123654879 124368597 124368795 124386597 124386795 124395678 124395687 124395768 124395786 124395867 124395876 125386749 125386947 125394786 125678943 125867943 126549873 127389456 127463859 127643859 128465937 128546793 129354876 129386475 129538647 129637845 132469785 132496578 132496758 132497568 132568794 132645897 132649758 132649857 132654879 132694857 134296578 134296587 134296758 134296857 135428697 135428796 135486927 135697842 135724896 135742896 135796842 135846927 135864927 136427589 136427598 137254869 137546928 137564829 137645928 137654928 138529647 139248567 139248576 139248657 139248675 139248756 139248765 139257648 139257846 139257864 139268457 139268475 139268574 139275648 139275846 139286457 145263879 145283679 145362798 145398672 145398762 146258937 146357892 146357928 146375892 146379852 146397825 146397852 146523897 146528793 146537928 146573892 146825937 146852937 147286593 147359862 147395862 148257369 148257396 148257693 148293567 148293657 148356792 148392576 148392756 149257386 149283765 149356872 149365782 149526873 149567823 152368497 152368794 152376849 152678934 152876934 153428679 153428769 153486927 153724896 153864927 154236798 154283679 154326897 154362789 154362798 154362879 154382769 154389627 154389672 154389726 154389762 154398627 154398672 154398726 154398762 156278943 156372948 156493827 156728943 156827943 156872934 157239468 157286394 157286493 157349628 158239476 158329674 158432796 158724936 159263874 159362874 162473598 162837954 163425789 163598724 163724895 164357928 164375829 164379825 164379852 164397825 164523879 164537829 164735928 164753928 164825937 165278934 165278943 165439782 165728943 165827943 165872934 167234859 167238459 167239485 167248395 167248539 167293548 167329584 167423895 167495832 167549823 167832945 168425793 168532794 169237485 169273485 169278435 169287534 169287543 169325487 169372485 169487523 172398564 172598634 172634895 173456829 173456892 173546892 173654829 174268539 174368925 174386925 175239846 175284396 175284693 175293486 175293684 175329846 175369482 175392486 175396482 176238549 176248539 176293458 176392548 176423895 178296543 178359426 178359462 178359642 178496532 179264835 179268345 179268435 179268534 179268543 179354826 179462835 183246957 183259467 183259476 183295476 183592764 184239765 184329765 184365729 185347629 185724936 185742936 187246395 187264539 187269435 187296435 187296453 187296534 189257346 189265473 189275364 189427536 189437652 189472653 192368457 192385467 192385746 192583764 192673845 193628754 193754826 194238657 194257638 194283657 194356728 194356827 195236847 196237548 196278453 196327548 196352478 196352748 197268543 197286345 197286354 197286435 197286453 197286534 197286543 197345862 197368524 197386524 198257346 198275364 198427536 198436752 198472653 198563724 198634752 198653724 213469587 213487569 213496857 213546897 213578649 213649758 213649785 213649857 213649875 213659874 214368795 214386795 214395678 214395687 214395768 214395786 214395867 214395876 215349876 215386947 215394786 215439876 215678934 215678943 215867943 215876943 216437598 217348569 217389564 217438569 217463859 217483569 217643859 218465937 218546937 219358674 219368457 219386475 219538647 219583647 219583746 219583764 219637845 231469785 231478596 231546897 231564879 231578694 231596847 231649758 231649857 231694758 231694857 231695847 234517698 234567918 234571896 234576891 234581697 234581796 234598671 234598761 234671895 234697851 234751869 234761895 234796851 235416789 235416798 235416879 235416897 235418679 237458619 237619845 239486751 239517864 243517698 243517869 243518769 243567918 243576891 243589617 243617859 243679815 243716859 243751869 243769815 245317698 245681937 246583917 246813957 246853917 247385691 247538619 247583619 248567931 248576913 248675913 248675931 248765913 248765931 249613758 249613785 249613857 249613875 249631758 249631857 251368497 251376849 251394867 251678934 251678943 251867943 251876934 253416879 253418679 253697814 253796814 254317689 254317698 254317869 254379816 254681937 256419783 256439817 256493871 257846913 259314678 259314876 259318467 259368471 259413687 259413876 259613874 261837954 263415879 265394781 265419783 267438915 267541893 268314579 268397415 268397514 268431597 268451739 269341587 269341785 269345871 271389645 271398654 271436598 271598634 271634895 273548619 273691845 274356819 275648913 275648931 275846913 275846931 276438915 276514839 276591843 278314569 278314659 278341596 278341695 278349561 278395614 278516934 278516943 278561934 278561943 278615934 278615943 278651934 278651943 279463815 279481563 279643815 281465739 281546937 281564937 281645937 281654937 284356917 284531796 284567931 284571936 285416793 285416937 286314597 286413597 286417593 286471593 286541937 287395614 287413569 287413659 289371546 291358674 291367584 291368457 291385746 291457683 291547683 291583764 291673845 294631758 294631857 295318476 295318647 295341687 295341867 295381476 295381647 295431687 295631847 296314587 296354871 296385741 296413578 296413857 297513864 297531846 297563814 297634851 297653814 298317546 298317645 298317654 298436517 298436715 298517634 298517643 312465879 312478695 312487569 312487659 312496857 312546897 312564879 312569784 312586749 312596748 312649758 312649785 312649857 312649875 312654879 312659784 312685749 312695748 315428697 315428796 315486927 315648927 315684927 315742869 315864927 316742859 317456928 317546892 317564829 317564928 318592674 318592746 318592764 319428576 319482675 319572684 319682745 319745862 321456879 321487569 321487596 321487659 321487695 321546798 321564789 321645897 321649758 321649857 321654879 321658794 321694758 321694857 324517698 324567891 324567918 324571689 324576891 324581796 324598761 324671895 324697851 324751869 324751896 324761895 324796851 325679841 325769841 326514879 326591847 327458691 327548619 327548691 327619845 328491657 329576841 341795862 342517689 342567819 342576891 342576918 342598617 342598716 342617859 342657918 342679815 342698715 342715869 342716859 342751869 342756918 342765918 342769815 345629781 345682791 345682917 345691728 345719862 345791862 345862917 346529817 346592718 347526918 349586712 349685712 351428697 351428796 351486792 351724869 351724896 351742869 352416879 352697814 352796814 354628791 354682791 354692718 354791826 354791862 356418729 356742918 357416928 357614829 357614928 358496712 358649712 358649721 358694721 361425789 361598724 361724895 362514879 364592718 364592781 365418729 365742918 365814927 365841927 367541928 369418725 369428517 369527841 369725841 369742815 371546928 371645928 371654829 371654928 372516948 372561894 372561948 372651894 372651948 372691845 374526891 374621895 375416892 376514892 379625841 379652814 382419765 384695712 385649712 386417952 386457912 389425671 389425761 389451762 391468572 391468752 391486572 391486752 391572648 391572684 391574682 391574862 391628754 391648752 391682745 391682754 391684752 391745862 391754826 391754862 392468571 392468751 392481756 392517864 392576841 394658721 395412687 395412768 395412786 395412867 395412876 395642871 395741862 396418725 396428517 396428715 396428751 396481752 396724851 397526814 397625814 397625841 397652814 398415762 398451762 412539768 412593678 412597683 412683759 412683795 413597682 415632798 416537928 416573829 416573892 416582793 416735928 416753892 416753928 416793825 416793852 416825937 418536729 418536792 418635729 418639725 418693725 419567823 419567832 419576832 419765832 421539786 421593768 421683795 423517869 423567918 423581796 423617859 423657891 423679815 423698715 423716859 423751869 423751896 423756891 423769815 425613879 425618793 425681937 425739861 425793816 425816937 428517639 428517693 428531697 428531796 428567913 428567931 428571936 428657913 428675931 428756913 428765931 429613857 429613875 429631857 432517698 432567891 432571896 432576918 432581796 432598761 432657918 432715869 432751869 432756918 432765918 437562918 437625891 438672915 438695712 439512786 452613879 452618793 452631789 452631798 452631879 452631897 452681739 452681937 453619728 453619827 453682791 453791862 456712839 456713829 456731892 456793821 458619732 459617832 459716832 461523879 461523897 461528793 461532789 461532798 461573892 461735892 461753892 461793825 461793852 462593718 463527819 463725819 463729815 465713829 465721839 465731892 465793821 471529836 471592863 476538912 481563729 481563792 482567913 482576913 482657913 482675913 482756913 482765913 486531927 486572913 486752913 491652873 491756823 491765832 493521867 495617832 495716832 495761832 497523861 497532861 512678934 512876934 513724896 513742869 514632879 516728943 516827943 516872934 518634927 518643927 519632784 521678943 521867943 523641879 523641897 523794861 526743819 527643819 527643891 527841936 528613794 528641793 529714836 529741836 531684927 531742869 531742896 531796842 531864927 532614789 532614798 532641789 532641798 532794861 534682791 534791862 537614829 538746912 541627893 541672893 541762893 542613879 542618793 543619728 543619827 546712839 546713928 546721893 546731892 546793821 546812937 548619732 549761832 561728943 561827943 561872934 562837914 563724891 563792814 564713928 564721839 564731892 564793821 569712834 569721843 571824936 572634891 572634918 572643918 572684913 572864913 573641892 578613924 578631924 581634927 581643927 582613794 587613924 592674813 592714863 592741863 592764813 592764831 594761832 596712834 596721843 612837954 613758924 613785924 613794825 613857924 613875924 614735928 614753928 614825937 615728943 615827943 615872934 617832945 621837954 625743819 631758924 631785942 631794852 631857924 631875942 634729815 634752891 634752918 634792815 634792851 634815927 637845912 639724851 641735892 641753892 641793825 641793852 643725819 643725891 643729851 643752819 643752918 643815927 645713928 645721839 645721893 645731892 645793821 651728943 651827943 651872934 652837914 653724891 653792814 654713928 654721839 654721893 654731892 654793821 659712834 659721843 683754921 684752913 691723854 691732854 693751824 695712834 695721843 716832945 725841936 751824936 752864913".split(" ").filter(r => Number(r.slice(0, 3)) <= 500 && Number(r.slice(6, 9)) <= 850); // a <= 500, c <= 850
+
+// ===== sound files (served next to this page) =====
+const SOUND_URLS = { scan: "sounds/scan.mp3", register: "sounds/register.mp3", print: "sounds/print.mp3" };
+// receipt printer sound: play part of the file (seconds), fading out at the end
+const PRINT_START = 6.5, PRINT_LENGTH = 4.5;
+
+const COLORS = ["#d8362b", "#6fd3e8", "#7a4a26", "#9bd63a", "#f2d23a", "#8f8f8f", "#f28a24", "#f29ac4", "#2f63d9"];
+const MARKS  = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
+const MAX_TRIES = 21, LAMP_COLS = 7, LAMP_ROWS = 3;
+const CV_KEY = "threeseven.colorAssist";
+const SAVE_KEY = "threeseven.progress";
+const CLEARED_KEY = "threeseven.clearedOnce"; // hidden flag: this browser has cleared at least once
+const hasCleared = () => { try { return localStorage.getItem(CLEARED_KEY) === "1"; } catch (e) { return false; } };
+const TUT_KEY = "threeseven.tutorialDone";
+// reel strip, top to bottom
+const ORDER = ["blank", "bell", "1", "2", "3", "4", "5", "6", "7", "8", "9", "bar"];
+
+const coinsFor = n => { let c = 0; for (const v of [500, 100, 50, 10, 5, 1]) { c += Math.floor(n / v); n %= v; } return c; };
+const symbolFor = d => d < 0 ? "blank" : d === 0 ? "bell" : (coinsFor(d) >= 10 ? "bar" : String(coinsFor(d)));
+// meter levels per digit row: [green count 0-4, red on]
+// cell k counted from the bottom: greens first, the red (5-unit coin) stacked on top of them
+const cellClass = (g, r, k) => k < g ? " lit g" : (r && k === g ? " lit r" : "");
+// before hint 5, BAR fills all 15 cells gray instead of the breakdown
+const cellFor = (lv, j, k) => lv === "bar" ? " lit x" : (lv ? cellClass(lv[j][0], lv[j][1], k) : "");
+const hint = () => S ? (S.allHints ? 6 : Math.min(6, Math.floor(S.history.length / 3))) : 0;
+const shown = sym => sym; // reel symbols stay the same at every hint level
+const levelsFor = d => d > 0 && coinsFor(d) >= 10 && hint() < 5 ? "bar" : meterDigits(d);
+const meterDigits = d => (d > 0 ? String(d).padStart(3, "0") : "000").split("").map(Number).map(n => [n % 5, n >= 5]);
+
+// ===== pixel sprites =====
+const DIGITS = {
+  0:["01110","10001","10001","10001","10001","10001","01110"],
+  1:["00100","01100","00100","00100","00100","00100","01110"],
+  2:["01110","10001","00001","00010","00100","01000","11111"],
+  3:["11111","00010","00100","00010","00001","10001","01110"],
+  4:["00010","00110","01010","10010","11111","00010","00010"],
+  5:["11111","10000","11110","00001","00001","10001","01110"],
+  6:["00110","01000","10000","11110","10001","10001","01110"],
+  7:["11111","00001","00010","00100","01000","01000","01000"],
+  8:["01110","10001","10001","01110","10001","10001","01110"],
+  9:["01110","10001","10001","01111","00001","00010","01100"]
+};
+const SMALL = { "1":["010","110","010","010","111"], "0":["111","101","101","101","111"], "+":["000","010","111","010","000"], B:["110","101","110","101","110"], A:["010","101","111","101","101"], R:["110","101","110","101","101"] };
+const BELL = ["....###....","...#####...","..#######..","..#######..","..#######..",".#########.",".#########.","###########","###########","....###....",".....#....."];
+const CW = 28, CH = 24, RH = 56;
+
+function glyph(ctx, rows, x, y, s, color) {
+  ctx.fillStyle = color;
+  rows.forEach((r, j) => [...r].forEach((ch, i) => { if (ch === "1" || ch === "#") ctx.fillRect(x + i * s, y + j * s, s, s); }));
+}
+function drawSymbol(ctx, sym, ox, oy) {
+  if (sym === "blank") { ctx.fillStyle = "#d4cfc2"; ctx.fillRect(ox + 10, oy + 11, 8, 2); return; }
+  if (sym === "bell") { glyph(ctx, BELL, ox + 8, oy + 6, 1, "#d99a12"); return; }
+  if (sym === "bar") {
+    ctx.fillStyle = "#1a1a1a"; ctx.fillRect(ox + 3, oy + 7, 22, 10);
+    let x = ox + 6;
+    for (const L of "BAR") { glyph(ctx, SMALL[L], x, oy + 9, 1, "#f2e6cf"); x += 6; }
+    return;
+  }
+  if (sym === "10+") { let x = ox + 3; for (const L of "10+") { glyph(ctx, SMALL[L], x, oy + 7, 2, "#2f4f7a"); x += 8; } return; }
+  glyph(ctx, DIGITS[sym], ox + 9, oy + 5, 2, sym === "7" ? "#e3241a" : "#2f4f7a");
+}
+const spriteURL = {};
+[...ORDER, "0", "10+"].forEach(s => {
+  const c = document.createElement("canvas"); c.width = CW; c.height = CH;
+  const g = c.getContext("2d"); g.fillStyle = "#efe3c8"; g.fillRect(0, 0, CW, CH); drawSymbol(g, s, 0, 0);
+  spriteURL[s] = c.toDataURL();
+});
+
+// ===== sound =====
+let ac = null, muted = false, printAudio = null;
+function audio() {
+  if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); loadBuffers(); } catch (e) {} }
+  if (ac && ac.state === "suspended") ac.resume();
+  return ac;
+}
+// mp3s are decoded once into Web Audio buffers so they play instantly (HTML <audio> lags on phones)
+const buffers = {};
+const LEAD_SILENCE = { scan: 0.07, register: 0.10, print: 0 }; // seconds of silence at the head of each file
+function loadBuffers() {
+  Object.entries(SOUND_URLS).forEach(([k, url]) => {
+    fetch(url).then(r => r.arrayBuffer())
+      .then(data => new Promise((ok, ng) => ac.decodeAudioData(data, ok, ng)))
+      .then(buf => { buffers[k] = buf; }).catch(() => {});
+  });
+}
+// play a decoded sound; returns {stop} or null
+function playBuffer(key, offset = 0, duration = 0, fade = 0) {
+  const a = audio(), buf = buffers[key];
+  if (!a || !buf || muted) return null;
+  const src = a.createBufferSource(), g = a.createGain(), t = a.currentTime;
+  src.buffer = buf; src.connect(g).connect(a.destination);
+  if (duration && fade) { g.gain.setValueAtTime(1, t + duration - fade); g.gain.linearRampToValueAtTime(0, t + duration); }
+  duration ? src.start(t, offset, duration) : src.start(t, offset);
+  return { stop: () => { try { src.stop(); } catch (e) {} } };
+}
+// unlock audio on the very first touch anywhere
+addEventListener("pointerdown", () => audio(), { once: true });
+function tone(freq, dur, type = "sine", vol = .2, when = 0, slide = 0) {
+  const a = audio(); if (!a || muted) return;
+  const t = a.currentTime + when, o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t); if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + .02);
+}
+const fileAudio = {};
+Object.keys(SOUND_URLS).forEach(k => { try { fileAudio[k] = new Audio(SOUND_URLS[k]); fileAudio[k].preload = "auto"; } catch (e) {} });
+function playFile(key) {
+  if (muted) return;
+  if (playBuffer(key, LEAD_SILENCE[key] || 0)) return;
+  if (!fileAudio[key]) return;
+  try { const a = fileAudio[key].cloneNode(); a.play().catch(() => {}); } catch (e) {}
+}
+const SFX = {
+  scan()     { playFile("scan"); },
+  lever()    { playFile("register"); },
+  tick()     { tone(900 + Math.random() * 200, .02, "square", .02); },
+  stop()     { tone(180, .08, "square", .06); },
+  // lottery hand bell ("karan-karan"): fast alternating strikes with metallic partials
+  jackpot()  { for (let i = 0; i < 12; i++) { const f = (i % 2 ? 1760 : 1480) * (1 + (Math.random() - .5) * .01), t = i * .11 + Math.random() * .015;
+    tone(f, .45, "sine", .12, t); tone(f * 2.76, .25, "sine", .05, t); tone(f * 5.4, .12, "sine", .025, t); } },
+  // soft kalimba-like plucks (a faint inharmonic partial on top), stepping down then up
+  print()    {
+    if (muted) return;
+    const p = playBuffer("print", PRINT_START, PRINT_LENGTH, .4);
+    if (p) { printAudio = { pause: p.stop }; return; }
+    if (!fileAudio.print) return;
+    try {
+      const a = fileAudio.print.cloneNode(); a.currentTime = PRINT_START; a.volume = 1;
+      a.play().catch(() => {});
+      setTimeout(() => { let v = 1; const t = setInterval(() => { v -= .1; if (v <= 0) { clearInterval(t); a.pause(); } else a.volume = v; }, 40); }, (PRINT_LENGTH - .4) * 1000);
+      printAudio = a;
+    } catch (e) {}
+  },
+  hint()     { [1175, 880, 1319].forEach((f, i) => { tone(f, .9, "sine", .11, i * .14); tone(f * 5.4, .18, "sine", .018, i * .14); }); },
+  gameover() { tone(330, .5, "square", .07, 0, 110); tone(160, .9, "sine", .12, .4, 60); }
+};
+
+// ===== state =====
+let S = null;
+const $ = id => document.getElementById(id);
+const rand = n => Math.floor(Math.random() * n);
+function shuffle(a) { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = rand(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function tutorialDone() { try { return localStorage.getItem(TUT_KEY) === "1"; } catch (e) { return false; } }
+function setTutorialDone() { try { localStorage.setItem(TUT_KEY, "1"); } catch (e) {} if (S) S.tutorialSeen = true; }
+
+function newProblem(prev = {}) {
+  const raw = DATA[rand(DATA.length)];
+  const a = raw.slice(0, 3), others = shuffle([raw.slice(3, 6), raw.slice(6, 9)]);
+  const left = others.pop();
+  const vals = [left, ...shuffle([a, others[0]])];
+  S = {
+    v: 3, reels: vals, lastD: null,
+    tries: MAX_TRIES, history: [], inserted: [],
+    phase: "select",
+    tutorial: true, // every problem starts with the guided first pull
+    tutorialSeen: prev.tutorialSeen || false,
+    faces: [0, 1, 2].map(() => ["1","2","3","4","5","6","8","9","bar","bell"][rand(10)])
+  };
+}
+const digitAt = p => S.reels[Math.floor(p / 3)][p % 3];
+
+// ===== build UI =====
+const goalEls = [], coinEls = [], slotEls = [$("s0"), $("s1"), $("s2")], reelCv = [], lampEls = [], meterEls = [];
+function meterHTML() {
+  return '<div class="meter">' + [0, 1, 2].map(() => '<div class="mrow">' + '<span class="cell"></span>'.repeat(5) + '</div>').join("") + "</div>";
+}
+function setMeter(root, levels) {
+  root.querySelectorAll(".mrow").forEach((row, j) => {
+    row.querySelectorAll(".cell").forEach((c, k) => { c.className = "cell" + cellFor(levels, j, k); });
+  });
+}
+(function build() {
+  for (let i = 0; i < MAX_TRIES; i++) {
+    const row = Math.floor(i / LAMP_COLS), col = i % LAMP_COLS;
+    const l = document.createElement("div"); l.className = "lamp";
+    l.style.setProperty("--i", col);
+    l.dataset.rank = (LAMP_COLS - 1 - col) * LAMP_ROWS + row; // 0 = first to go out (top-right)
+    $("lamps").appendChild(l); lampEls.push(l);
+  }
+  for (let g = 0; g < 3; g++) {
+    const grp = document.createElement("div"); grp.className = "group";
+    for (let k = 0; k < 3; k++) {
+      const p = g * 3 + k, b = document.createElement("button");
+      b.className = "coin"; b.style.setProperty("--c", COLORS[p]); b.setAttribute("aria-label", "コイン" + (p + 1));
+      b.innerHTML = `<span class="mark">${MARKS[p]}</span>`;
+      b.addEventListener("click", () => insert(p));
+      grp.appendChild(b); coinEls.push(b);
+    }
+    $("coins").appendChild(grp);
+    const r = document.createElement("div"); r.className = "reel";
+    const c = document.createElement("canvas"); c.width = CW; c.height = RH;
+    r.appendChild(c); $("reels").appendChild(r); reelCv.push(c);
+    const m = document.createElement("div"); m.innerHTML = meterHTML(); $("meters").appendChild(m.firstChild); meterEls.push($("meters").lastChild);
+    const gm = document.createElement("div"); gm.innerHTML = meterHTML(); $("goal").appendChild(gm.firstChild); goalEls.push($("goal").lastChild);
+  }
+})();
+
+// ===== reels: fixed strip blank, bell, 1-9, BAR =====
+const symAt = i => ORDER[((-i % 12) + 12) % 12];
+const reel = [0, 1, 2].map(() => ({ s: 0 }));
+function drawReel(r) {
+  const ctx = reelCv[r].getContext("2d"), R = reel[r];
+  ctx.fillStyle = "#efe3c8"; ctx.fillRect(0, 0, CW, RH);
+  const base = Math.floor(R.s / CH);
+  for (let i = base - 2; i <= base + 3; i++) {
+    const y = Math.round(RH / 2 - CH / 2 - (i * CH - R.s));
+    if (y > RH || y < -CH) continue;
+    const sym = symAt(i);
+    drawSymbol(ctx, shown(sym), 0, y);
+    // line on top of each cell; the BAR | blank seam is darker
+    ctx.fillStyle = sym === "blank" ? "rgba(40,20,12,.55)" : "rgba(60,30,20,.14)";
+    ctx.fillRect(0, y, CW, 1);
+  }
+}
+function setFace(r, sym) { reel[r].s = (((12 - ORDER.indexOf(sym)) % 12)) * CH; drawReel(r); }
+
+function spin(results) {
+  return new Promise(done => {
+    // reach: when left and middle both land on 7, the right reel blinks and keeps spinning longer
+    const reach = results[0] === "7" && results[1] === "7";
+    const start = performance.now(), stops = reach ? [900, 1350, 3600] : [900, 1350, 1800], speed = 0.42;
+    const rightReel = reelCv[2].parentElement;
+    let reachOn = false;
+    const st = [0, 1, 2].map(() => ({ stopping: false, done: false, from: 0, target: 0, t0: 0, dur: 0 }));
+    let last = start, lastTick = 0;
+    function frame(now) {
+      const el = now - start, dt = Math.min(40, now - last); last = now;
+      for (let r = 0; r < 3; r++) {
+        const R = reel[r], s = st[r];
+        if (s.done) continue;
+        if (!s.stopping && el >= stops[r]) {
+          let t = Math.floor(R.s / CH) + 2;
+          while (symAt(t) !== results[r]) t++;
+          s.stopping = true; s.t0 = now; s.from = R.s; s.target = t * CH;
+          s.dur = Math.max(260, (s.target - s.from) / speed * 1.2);
+        }
+        if (s.stopping) {
+          const k = Math.min(1, (now - s.t0) / s.dur), e = 1 - Math.pow(1 - k, 3);
+          R.s = s.from + (s.target - s.from) * e;
+          if (k >= 1) {
+            R.s = s.target; s.done = true; SFX.stop();
+            setMeter(meterEls[r], levelsFor(S.lastD[r]));
+          }
+        } else {
+          if (reach && r === 2 && st[1].done && !reachOn) { reachOn = true; rightReel.classList.add("reach"); }
+          R.s += speed * dt;
+        }
+        drawReel(r);
+      }
+      if (now - lastTick > 70) { SFX.tick(); lastTick = now; }
+      if (st.every(s => s.done)) { rightReel.classList.remove("reach"); done(); return; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// ===== goal meter: how the meters light when 777 lines up =====
+function goalX() {
+  for (let x = 100; x <= 999; x++) if (S.reels.every(v => symbolFor(x - Number(v)) === "7")) return x;
+  return null;
+}
+function drawGoal() {
+  const x = goalX();
+  goalEls.forEach((el, r) => setMeter(el, x === null ? null : levelsFor(x - Number(S.reels[r]))));
+}
+
+// ===== clear effect: receipts =====
+const RC_NAMES = ["Inspired by 6_23", "SPIN × {n}", "Nazo by wowa__"]; // left, middle, right reel
+function barcodeSVG(seedIn) {
+  let seed = seedIn, x = 0, bars = "";
+  const r = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+  while (x < 180) { const w = 1 + Math.floor(r() * 3); if (r() > .45) bars += `<rect x="${x}" y="0" width="${w}" height="42"/>`; x += w; }
+  return `<svg class="bar" width="180" height="42" viewBox="0 0 180 42" fill="#111" aria-hidden="true">${bars}</svg>`;
+}
+// change coins, largest first; [diameter mm, color, hole]
+const YEN_LOOK = { 500: [26.5, "#d6b25e", 0], 100: [22.6, "#c3c6ca", 0], 50: [21, "#c9ccd0", 1], 10: [23.5, "#b8673a", 0], 5: [22, "#d8b04a", 1], 1: [20, "#d9dcdf", 0] };
+const COINS_IN_AT = 2.7 + 1.5; // seconds: all receipts printed, then 1.5 s
+const COIN_SCALE = 2.0, COIN_AREA = 200; // px per mm (real size ratios kept); width of the receipt's text column
+function changeCoins(change, seed) {
+  let n = change, list = [];
+  for (const v of [500, 100, 50, 10, 5, 1]) { for (let k = 0; k < Math.floor(n / v); k++) list.push(v); n %= v; }
+  let sd = seed * 9301 + 49297; const r = () => (sd = (sd * 9301 + 49297) % 233280) / 233280;
+  const dmax = Math.round(26.5 * COIN_SCALE);
+  const step = list.length > 1 ? (COIN_AREA - dmax) / (list.length - 1) : 0;
+  return list.map((v, k) => {
+    const [mm, color, hole] = YEN_LOOK[v], d = Math.round(mm * COIN_SCALE);
+    // stays inside the receipt: never above the dashed rule, may overlap the code digits below
+    const left = Math.min(COIN_AREA - d, Math.max(0, k * step + (dmax - d) / 2 + (r() - .5) * 12));
+    const top = -2 + r() * 18;
+    return `<span class="yen${hole ? " hole" : ""}" style="--yc:${color};width:${d}px;height:${d}px;left:${left.toFixed(0)}px;top:${top.toFixed(0)}px;animation-delay:${(COINS_IN_AT + k * .06).toFixed(2)}s"></span>`;
+  }).join("");
+}
+function jackpotFlash() {
+  const m = $("machine");
+  m.classList.remove("jackpot"); void m.offsetWidth; m.classList.add("jackpot");
+  setTimeout(() => m.classList.remove("jackpot"), 2000);
+}
+function showReceipts() {
+  const x = goalX(), n = S.history.length, now = new Date(S.clearedAt || Date.now());
+  const pad = v => String(v).padStart(2, "0");
+  const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${["SUN","MON","TUE","WED","THU","FRI","SAT"].at(now.getDay())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const yen = v => "¥" + v.toLocaleString("en-US");
+  $("rcRow").innerHTML = S.reels.map((v, i) => {
+    const price = Number(v);
+    return `<div class="receipt">
+      <div class="c logo">THREE<b>SEVEN</b></div>
+      <div class="c title">RECEIPT</div>
+      <div class="c">TEL 0x-xxxx-xxxx</div>
+      <div class="rule"></div>
+      <div>${stamp}</div>
+      <div class="rule"></div>
+      <div class="line"><span>${RC_NAMES[i].replace("{n}", n)}</span><span>${yen(price)}</span></div>
+      <div class="rule"></div>
+      <div class="line big"><span>TOTAL</span><span>${yen(price)}</span></div>
+      <div class="line"><span>CASH</span><span>${yen(x)}</span></div>
+      <div class="line big"><span>CHANGE</span><span>${yen(x - price)}</span></div>
+      <div class="rule"></div>
+      <div class="barwrap">${barcodeSVG(price * 7 + i + 11)}${changeCoins(x - price, price)}</div>
+      <div class="code">${[0, 1, 2].map(k => S.reels[(i + k) % 3]).join("")}${i + 1}</div>
+    </div>`;
+  }).join("");
+  $("rcShare").href = shareURL(n);
+  $("receipts").hidden = false;
+  SFX.print();
+  $("receipts").scrollTop = 0;
+}
+// tap anywhere outside the receipts and the SHARE button to go back to the machine
+$("receipts").addEventListener("click", e => { if (!e.target.closest(".receipt, #rcShare")) { $("receipts").hidden = true; if (printAudio) printAudio.pause(); } });
+// on GitHub Pages share the page's own address; inside Claude fall back to the artifact link
+const GAME_URL = /\.github\.io$/.test(location.hostname) ? location.origin + location.pathname : "https://claude.ai/artifact/H72omyRCxcpAsd7H9Htoq1";
+const rankFor = n => n <= 6 ? "LUCKY" : n <= 12 ? "BEYOND HUMAN" : n <= 15 ? "INSANE" : n <= 18 ? "INCREDIBLE" : "EXCELLENT";
+function shareURL(n) {
+  const text = `I got THREESEVEN in ${n} spins!!\n\n${GAME_URL}\n\n#THREESEVEN`;
+  return "https://x.com/intent/post?text=" + encodeURIComponent(text);
+}
+
+// ===== hints =====
+function flash(els) { els.forEach(e => { e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); setTimeout(() => e.classList.remove("flash"), 1300); }); }
+function showLinks() {
+  const groups = [...document.querySelectorAll("#coins .group")], reels = [...document.querySelectorAll("#reels .reel")];
+  const frame = $("linkframe"), face = frame.parentElement;
+  const place = g => {
+    const box = [groups[g], reels[g], meterEls[g], goalEls[g]].map(e => e.getBoundingClientRect()), f = face.getBoundingClientRect(), pad = 5;
+    const l = Math.min(...box.map(b => b.left)), t = Math.min(...box.map(b => b.top)), r = Math.max(...box.map(b => b.right)), btm = Math.max(...box.map(b => b.bottom));
+    Object.assign(frame.style, { left: (l - f.left - pad) + "px", top: (t - f.top - pad) + "px", width: (r - l + pad * 2) + "px", height: (btm - t + pad * 2) + "px" });
+    frame.hidden = false;
+  };
+  for (let step = 0; step < 6; step++) { // left, middle, right, twice
+    setTimeout(() => place(step % 3), step * 700);
+    setTimeout(() => { frame.hidden = true; }, step * 700 + 650);
+  }
+}
+function unlockHint(level) {
+  SFX.hint();
+  const hist = () => [...document.querySelectorAll(".hres .meter")];
+  if (level === 1) flash([document.querySelector(".slotf.white")]);
+  if (level === 2) flash([$("meters"), ...hist()]);
+  if (level === 3) showLinks();
+  if (level === 4) flash([$("goal"), ...document.querySelectorAll(".plabel:not(.blank)")]);
+  if (level === 5) {
+    // only the BARs: the reel showing BAR, its meter, and BAR entries in the history
+    const els = [];
+    S.faces.forEach((f, r) => { if (f === "bar") els.push(document.querySelectorAll("#reels .reel")[r], meterEls[r]); });
+    document.querySelectorAll(".hrow").forEach((row, j) => S.history[j].res.forEach((f, r) => { if (f === "bar") els.push(row.querySelectorAll(".hres")[r]); }));
+    flash(els);
+  }
+  if (level === 6) flash([...coinEls, ...document.querySelectorAll(".hrow .mini")]);
+}
+
+// ===== actions =====
+function insert(p) {
+  if (S.phase !== "select" || S.inserted.length >= 3 || S.inserted.includes(p)) return;
+  if (S.tutorial && p !== S.inserted.length) return;
+  audio(); SFX.scan();
+  S.inserted.push(p);
+  render();
+}
+function resetInsert() {
+  if (S.phase !== "select" || S.tutorial || !S.inserted.length) return;
+  S.inserted = []; render();
+}
+async function pull() {
+  if (S.phase !== "select" || S.inserted.length < 3) return;
+  audio(); SFX.lever();
+  S.phase = "spinning";
+  $("lever").classList.add("pulled");
+  setTimeout(() => $("lever").classList.remove("pulled"), 260);
+  S.tries -= 1;
+  meterEls.forEach(m => setMeter(m, null));
+  render();
+  const x = Number(S.inserted.map(digitAt).join(""));
+  S.lastD = S.reels.map(v => x - Number(v));
+  const res = S.lastD.map(symbolFor);
+  await spin(res);
+  S.faces = res;
+  const levelBefore = hint();
+  S.history.unshift({ coins: S.inserted.slice(), res, d: S.lastD.slice() });
+  // on a clear the winning coins stay in the tray; otherwise the tray empties for the next pull
+  if (!res.every(s => s === "7")) S.inserted = [];
+  const wasTutorial = S.tutorial;
+  S.tutorial = false;
+  if (res.every(s => s === "7")) { S.phase = "clear"; SFX.jackpot(); S.clearedAt = Date.now(); try { localStorage.setItem(CLEARED_KEY, "1"); } catch (e) {} jackpotFlash(); setTimeout(() => { S.allHints = true; render(); showReceipts(); }, 2500); } // every hint opens just before the receipts
+  else if (S.tries <= 0 && !S.continued) { S.phase = "over"; SFX.gameover(); }
+  else S.phase = "select";
+  render();
+  if (S.phase === "select" && hint() > levelBefore) setTimeout(() => unlockHint(hint()), 350);
+  if (wasTutorial) setTimeout(openIntro, 700);
+}
+// keep the same problem, history and hints; lamps stay out and there is no further limit
+function continueGame() {
+  audio();
+  S.continued = true; S.phase = "select"; S.inserted = [];
+  render();
+}
+function next() {
+  audio();
+  newProblem({ tutorialSeen: S.tutorialSeen });
+  [0, 1, 2].forEach(r => { setFace(r, S.faces[r]); setMeter(meterEls[r], null); });
+  drawGoal();
+  render();
+}
+
+(function leverInput() {
+  const lv = $("lever"); let y0 = null, moved = 0;
+  lv.addEventListener("pointerdown", e => { y0 = e.clientY; moved = 0; lv.setPointerCapture(e.pointerId); });
+  lv.addEventListener("pointermove", e => { if (y0 !== null) moved = e.clientY - y0; });
+  lv.addEventListener("pointerup", () => { if (y0 !== null && (moved > 24 || Math.abs(moved) < 6)) pull(); y0 = null; });
+  lv.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pull(); } });
+})();
+$("reset").addEventListener("click", resetInsert);
+$("mute").addEventListener("click", () => { muted = !muted; drawMute(); });
+let assist = true;
+try { assist = localStorage.getItem(CV_KEY) !== "0"; } catch (e) {}
+$("assist").addEventListener("click", () => { assist = !assist; try { localStorage.setItem(CV_KEY, assist ? "1" : "0"); } catch (e) {} drawAssist(); });
+function drawAssist() {
+  document.body.classList.toggle("assist", assist);
+  $("assist").setAttribute("aria-pressed", String(assist));
+  $("assistIcon").innerHTML = '<path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="currentColor"/>' +
+    (assist ? "" : '<path d="M4 20L20 4"/>');
+}
+function drawMute() {
+  $("muteIcon").innerHTML = '<path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/>' +
+    (muted ? '<path d="M16 9l5 6M21 9l-5 6"/>' : '<path d="M16 9c1.5 1.5 1.5 4.5 0 6M18.5 6.5c3 3 3 8 0 11"/>');
+}
+
+// ===== tutorial pointer =====
+function placeHand() {
+  const h = $("hand");
+  if (!S.tutorial || S.phase !== "select" || !$("intro").hidden) { h.setAttribute("hidden", ""); return; }
+  const target = S.inserted.length < 3 ? coinEls[S.inserted.length] : $("lever").querySelector(".knob");
+  const r = target.getBoundingClientRect();
+  h.removeAttribute("hidden");
+  h.style.left = (r.left + r.width / 2 - 13) + "px"; // fingertip centre sits 13px from the icon's left edge
+  h.style.top = (r.top + r.height * .55) + "px";
+}
+
+// ===== render =====
+const ICON_NEXT  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M4 12h15M13 6l6 6-6 6"/></svg>';
+const ICON_RETRY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v5h-5"/></svg>';
+function miniMeter(levels) {
+  return '<div class="meter">' + [0, 1, 2].map(j => '<div class="mrow">' +
+    [0, 1, 2, 3, 4].map(k => `<span class="cell${cellFor(levels, j, k)}"></span>`).join("") + "</div>").join("") + "</div>";
+}
+function save() {
+  if (S.phase === "spinning") return; // saved again when the reels stop
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {}
+}
+function loadSaved() {
+  try { const v = JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); return v && v.v === 3 && v.reels ? v : null; } catch (e) { return null; }
+}
+function render() {
+  save();
+  const sel = S.phase === "select", lv = hint();
+  for (let k = 1; k <= 6; k++) document.body.classList.toggle("h" + k, lv >= k);
+  if (S.phase !== "spinning" && S.lastD) [0, 1, 2].forEach(r => setMeter(meterEls[r], levelsFor(S.lastD[r])));
+  if (S.phase !== "spinning") [0, 1, 2].forEach(drawReel);
+  coinEls.forEach((b, p) => { b.firstChild.textContent = lv >= 6 ? digitAt(p) : MARKS[p]; });
+  coinEls.forEach((b, p) => {
+    const used = S.inserted.includes(p);
+    const lockedByTut = S.tutorial && (S.inserted.length >= 3 || p !== S.inserted.length);
+    b.classList.toggle("used", used);
+    b.classList.toggle("locked", !sel || lockedByTut);
+    b.disabled = !sel || used || S.inserted.length >= 3 || lockedByTut;
+  });
+  const awaiting = sel && S.inserted.length < 3;
+  $("coins").classList.toggle("await", awaiting);
+  slotEls.forEach((el, i) => {
+    const p = S.inserted[i];
+    el.classList.toggle("next", awaiting && i === S.inserted.length);
+    el.classList.toggle("filled", p !== undefined);
+    el.style.background = p !== undefined ? COLORS[p] : "";
+    el.style.setProperty("--c", p !== undefined ? COLORS[p] : "transparent");
+    el.innerHTML = p !== undefined ? `<b class="smark">${lv >= 6 ? digitAt(p) : MARKS[p]}</b>` : "";
+  });
+  $("reset").disabled = !sel || S.tutorial || !S.inserted.length;
+  const ready = sel && S.inserted.length === 3;
+  $("lever").disabled = !ready;
+  $("lever").classList.toggle("ready", ready);
+
+  lampEls.forEach(l => {
+    l.classList.toggle("on", S.phase === "clear" || Number(l.dataset.rank) >= MAX_TRIES - S.tries);
+    l.classList.toggle("blink", S.phase === "clear");
+  });
+  $("machine").classList.toggle("off", S.phase === "over");
+
+  const res = $("result");
+  if (S.phase === "clear") res.innerHTML = `<button class="btn word" id="resultBtn">Result</button><button class="btn word" id="nextBtn">New Game</button>`;
+  else if (S.phase === "over") res.innerHTML = `<button class="btn word" id="contBtn">Continue</button><button class="btn word" id="nextBtn">New Game</button>`;
+  else res.innerHTML = "";
+  const nb = $("nextBtn"); if (nb) nb.addEventListener("click", next);
+  const rb = $("resultBtn"); if (rb) rb.addEventListener("click", showReceipts);
+  const cb = $("contBtn"); if (cb) cb.addEventListener("click", continueGame);
+
+  $("hcount").textContent = `${S.history.length} / ${MAX_TRIES}`;
+  $("hlist").innerHTML = S.history.map(h => {
+    const win = h.res.every(s => s === "7");
+    return `<div class="hrow${win ? " win" : ""}">` +
+      h.coins.map(p => `<span class="mini" style="background:${COLORS[p]}"><b>${hint() >= 6 ? digitAt(p) : MARKS[p]}</b></span>`).join("") +
+      `<svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12h15M13 6l6 6-6 6"/></svg>` +
+      h.res.map((s, i) => `<div class="hres"><img src="${spriteURL[shown(s)]}" alt="">${miniMeter(levelsFor(h.d[i]))}</div>`).join("") + `</div>`;
+  }).join("");
+  placeHand();
+}
+window.addEventListener("resize", placeHand);
+window.addEventListener("scroll", placeHand, { passive: true });
+
+// ===== intro popup: shown once per page load, right after the first tutorial pull =====
+let introShown = false;
+$("info").addEventListener("click", () => { prepRanks(); introShown = true; introLocked = false; $("introNew").hidden = false; $("intro").hidden = false; placeHand(); $("introGo").focus(); });
+function prepRanks() {
+  const r = document.querySelector(".ranks");
+  const c = hasCleared();
+  r.classList.toggle("tappable", c);
+  r.classList.toggle("flipped", c); // after a first clear the challenge line is the default face
+  $("secret").hidden = !c;
+}
+document.querySelector(".ranks").addEventListener("click", () => {
+  if (!hasCleared()) return;
+  const r = document.querySelector(".ranks"), show = !r.classList.contains("flipped");
+  r.classList.toggle("flipped", show); $("secret").hidden = !show;
+});
+// shown after every tutorial, with OK only
+function openIntro() { prepRanks(); introShown = true; introLocked = true; $("introNew").hidden = true; $("intro").hidden = false; placeHand(); $("introGo").focus(); }
+function closeIntro() { $("intro").hidden = true; audio(); placeHand(); }
+$("introGo").addEventListener("click", closeIntro);
+document.querySelector(".whitebox").addEventListener("click", e => {
+  if (hint() < 1) return; // only once the white coin is out
+  const w = e.currentTarget;
+  w.classList.remove("deny"); void w.offsetWidth; w.classList.add("deny");
+});
+document.querySelector(".whitebox").addEventListener("animationend", e => e.currentTarget.classList.remove("deny"));
+$("introNew").addEventListener("click", () => {
+  if (S.phase === "spinning") return;
+  $("intro").hidden = true; $("receipts").hidden = true;
+  next();
+});
+// after the tutorial the popup closes only with OK; opened from i it also closes on outside tap / Escape
+let introLocked = false;
+$("intro").addEventListener("click", e => { if (e.target === $("intro") && !introLocked) closeIntro(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && !$("intro").hidden && !introLocked) closeIntro(); });
+
+// ===== boot (keeps state across a republish) =====
+function start(saved) {
+  // resume: a live-reload snapshot first, then progress saved in this browser
+  const resume = (saved && saved.S && saved.S.v === 3) ? saved.S : loadSaved();
+  if (resume) {
+    S = resume;
+    if (S.phase === "spinning") { S.phase = "select"; S.inserted = []; }
+    if (!S.tutorial) introShown = true; // the intro was already seen in this game
+  } else newProblem();
+  drawMute(); drawAssist();
+  [0, 1, 2].forEach(r => { setFace(r, S.faces[r]); setMeter(meterEls[r], S.lastD ? levelsFor(S.lastD[r]) : null); });
+  drawGoal();
+  render();
+  setTimeout(placeHand, 300);
+}
+window.claude?.hot?.snapshot?.(() => ({ S }));
+window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+</script>
+</body>
+</html>
