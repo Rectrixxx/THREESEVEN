@@ -538,6 +538,7 @@ function audio() {
 // mp3s are decoded once into Web Audio buffers so they play instantly (HTML <audio> lags on phones)
 const buffers = {};
 const LEAD_SILENCE = { scan: 0.07, register: 0.10, print: 0 }; // seconds of silence at the head of each file
+const FILE_VOLUME = { scan: 0.6, register: 0.6, print: 1 }; // playback level per sound file
 function loadBuffers() {
   Object.entries(SOUND_URLS).forEach(([k, url]) => {
     fetch(url).then(r => r.arrayBuffer())
@@ -546,12 +547,12 @@ function loadBuffers() {
   });
 }
 // play a decoded sound; returns {stop} or null
-function playBuffer(key, offset = 0, duration = 0, fade = 0) {
+function playBuffer(key, offset = 0, duration = 0, fade = 0, vol = 1) {
   const a = audio(), buf = buffers[key];
   if (!a || !buf || muted) return null;
   const src = a.createBufferSource(), g = a.createGain(), t = a.currentTime;
-  src.buffer = buf; src.connect(g).connect(a.destination);
-  if (duration && fade) { g.gain.setValueAtTime(1, t + duration - fade); g.gain.linearRampToValueAtTime(0, t + duration); }
+  src.buffer = buf; src.connect(g).connect(a.destination); g.gain.setValueAtTime(vol, t);
+  if (duration && fade) { g.gain.setValueAtTime(vol, t + duration - fade); g.gain.linearRampToValueAtTime(0, t + duration); }
   duration ? src.start(t, offset, duration) : src.start(t, offset);
   return { stop: () => { try { src.stop(); } catch (e) {} } };
 }
@@ -568,9 +569,9 @@ const fileAudio = {};
 Object.keys(SOUND_URLS).forEach(k => { try { fileAudio[k] = new Audio(SOUND_URLS[k]); fileAudio[k].preload = "auto"; } catch (e) {} });
 function playFile(key) {
   if (muted) return;
-  if (playBuffer(key, LEAD_SILENCE[key] || 0)) return;
+  if (playBuffer(key, LEAD_SILENCE[key] || 0, 0, 0, FILE_VOLUME[key] ?? 1)) return;
   if (!fileAudio[key]) return;
-  try { const a = fileAudio[key].cloneNode(); a.play().catch(() => {}); } catch (e) {}
+  try { const a = fileAudio[key].cloneNode(); a.volume = FILE_VOLUME[key] ?? 1; a.play().catch(() => {}); } catch (e) {}
 }
 const SFX = {
   scan()     { playFile("scan"); },
